@@ -25,120 +25,133 @@
 namespace Opine;
 
 class Financial {
-	private $db;
-	private $creditcardGateway;
-	private $cashGateway;
-	private $checkGateway;
-	private $storecreditGateway;
-	private $giftcardGateway;
-	private $methodTypes = ['creditcard', 'cash', 'check', 'storecredit', 'giftcard'];
+    private $db;
+    private $creditcardGateway;
+    private $cashGateway;
+    private $checkGateway;
+    private $storecreditGateway;
+    private $giftcardGateway;
+    private $methodTypes = ['creditcard', 'cash', 'check', 'storecredit', 'giftcard'];
 
-	public function __construct ($db, $creditcardGateway=false, $cashGateway=false, $checkGateway=false, $storecreditGateway=false, $giftcardGateway=false) {
-		$this->db = $db;
-		$this->creditcardGateway = $creditcardGateway;
-		$this->cashGateway = $cashGateway;
-		$this->checkGateway = $checkGateway;
-		$this->storecreditGateway = $storecreditGateway;
-		$this->giftcardGateway = $giftcardGateway;
-	}
+    public function __construct ($db, $creditcardGateway=false, $cashGateway=false, $checkGateway=false, $storecreditGateway=false, $giftcardGateway=false) {
+        $this->db = $db;
+        $this->creditcardGateway = $creditcardGateway;
+        $this->cashGateway = $cashGateway;
+        $this->checkGateway = $checkGateway;
+        $this->storecreditGateway = $storecreditGateway;
+        $this->giftcardGateway = $giftcardGateway;
+    }
 
-	public function payment ($orderId, $descritpion, array &$methods, array $paymentInfo, array $billingInfo, &$response) {
-		//validate input
-		foreach ($methods as $method) {
-			if (!isset($method['type']) || empty($method['type'])) {
-				throw new \Exception('Invalid payment attempt, malformed method array');
-			}
-			if (!in_array($method['type'], $this->methodTypes)) {
-				throw new \Exception ('Unknown payment method type: ' . $method['type']);
-			}
-			if (!isset($method['amount']) || empty($method['amount'])) {
-				throw new \Exception ('Payment method has no amount: ' . $method['type']);
-			}
-		}
+    public function payment ($locationId, $customerId, $operatorId=false, $orderId, $description, array &$methods, array $paymentInfo, array $billingInfo, &$response) {
+        //validate input
+        foreach ($methods as $method) {
+            if (!isset($method['type']) || empty($method['type'])) {
+                throw new \Exception('Invalid payment attempt, malformed method array');
+            }
+            if (!in_array($method['type'], $this->methodTypes)) {
+                throw new \Exception ('Unknown payment method type: ' . $method['type']);
+            }
+            if (!isset($method['amount']) || empty($method['amount'])) {
+                throw new \Exception ('Payment method has no amount: ' . $method['type']);
+            }
+        }
 
-		//authorize
-		foreach ($methods as &$method) {
-			$method['response'] = null;
-			$method['result'] = null;
-			$method['result'] = $this->{$method['type'] . 'Gateway'}->authorize($orderId, $descritpion, $method['amount'], $method['response']);
-			if ($result !== true) {
-				break;
-			}
-		}
+        //authorize
+        foreach ($methods as &$method) {
+            $method['response'] = null;
+            $method['result'] = null;
+            $method['result'] = $this->{$method['type'] . 'Gateway'}->authorize($orderId, $description, $method['amount'], $method['response']);
+            if ($result !== true) {
+                break;
+            }
+        }
 
-		//check
-		if ($this->rollback($methods, $response) == true) {
-			return false;
-		}
-		
-		//charge
-		foreach ($methods as $method) {
-			$method['response'] = null;
-			$method['result'] = null;
-			$method['result'] = $this->{$method['type'] . 'Gateway'}->payment($orderId, $descritpion, $method['amount'], $method['response']);
-			if ($result !== true) {
-				break;
-			}
-		}
-		
-		//re-check
-		if ($this->rollback($methods, $response) == true) {
-			return false;
-		}
+        //check
+        if ($this->rollback($methods, $response) == true) {
+            return false;
+        }
+        
+        //charge
+        foreach ($methods as $method) {
+            $method['response'] = null;
+            $method['result'] = null;
+            $method['result'] = $this->{$method['type'] . 'Gateway'}->payment($orderId, $description, $method['amount'], $method['response']);
+            if ($result !== true) {
+                break;
+            }
+        }
+        
+        //re-check
+        if ($this->rollback($methods, $response) == true) {
+            return false;
+        }
 
-		//save in database
-		foreach ($methods as &$method) {
-			$transactionId = new \MongoId();
-			$method['transaction_id'] = $transactionId;
-			$this->db->collection('financial_transactions')->save([
-				'_id' => $transactionId,
-				'order_id' => $orderId,
-				'description' => $description,
-				'payment_method' => $method['type'],
-				'type' => 'sale',
-				'amount' => $method['amount'],
-				'created_date' => new \MongoDate(strtotime('now'))
-			]);
-		}
-		return true;
-	}
+        //save in database
+        foreach ($methods as &$method) {
+            $transactionId = new \MongoId();
+            $method['transaction_id'] = $transactionId;
+            $this->db->collection('financial_transactions')->save([
+                '_id' => $transactionId,
+                'location_id' => $locationId,
+                'customer_id' => $customerId,
+                'operator_id' => $operatorId,
+                'order_id' => $orderId,
+                'description' => $description,
+                'payment_method' => $method['type'],
+                'transaction_id' => isset($method['response']['transaction_id']) ? $method['response']['transaction_id'] : null,
+                'type' => 'sale',
+                'amount' => $method['amount'],
+                'revenue' => isset($method['revenue']) ? $method['revenue'] : $method['amount'],
+                'created_date' => new \MongoDate(strtotime('now'))
+            ]);
+        }
+        return true;
+    }
 
-	private function rollback ($methods, &$response) {
-		$rollback = false;
-		foreach ($methods as $method) {
-			if ($method['result'] != true) {
-				$rollback = true;
-				$response = $method['response'];
-				break;
-			}
-		}
-		if ($rollback == true) {
-			foreach ($methods as $method) {
-				if ($method['result'] === true) {
-					$this->{$method['type'] . 'Gateway'}->rollback($method['response']);
-				}
-			}
-			return true;
-		}
-		return false;
-	}
+    private function rollback ($methods, &$response) {
+        $rollback = false;
+        foreach ($methods as $method) {
+            if ($method['result'] != true) {
+                $rollback = true;
+                $response = $method['response'];
+                break;
+            }
+        }
+        if ($rollback == true) {
+            foreach ($methods as $method) {
+                if ($method['result'] === true) {
+                    $this->{$method['type'] . 'Gateway'}->rollback($method['response']);
+                }
+            }
+            return true;
+        }
+        return false;
+    }
 
-	public function refund ($orderId, $description, $method, $amount, &$response, &$refundId=false) {
-		$result = $this->{$method . 'Gateway'}->refund($descritpion, $amount, $response);
-		if ($response != true) {
-			return false;
-		}
-		$refundId = new \MongoId();
-		$this->db->collection('financial_transactions')->save([
-			'_id' => $refundId,
-			'order_id' => $orderId,
-			'description' => $description,
-			'payment_method' => $method,
-			'type' => 'refund',
-			'amount' => $method['amount'],
-			'created_date' => new \MongoDate(strtotime('now')),
-			'response' => (array)$response
-		]);
-		return true;
-	}
+    public function refund ($locationId, $customerId, $operatorId, $orderId, $description, $paymentMethod, $refundMethod, $amount, &$response, &$refundId=false) {
+        $result = $this->{$method . 'Gateway'}->refund($description, $amount, $response);
+        if ($response != true) {
+            return false;
+        }
+        $refundId = new \MongoId();
+        $this->db->collection('financial_transactions')->save([
+            '_id' => $refundId,
+            'location_id' => $locationId,
+            'customer_id' => $customerId,
+            'operator_id' => $operatorId,
+            'order_id' => $orderId,
+            'description' => $description,
+            'payment_method' => $paymentMethod,
+            'refund_method' => $refundMethod,
+            'refund_giftcard_id' => isset($response['refund_giftcard_id']) ? $response['refund_giftcard_id'] : null,
+            'refund_storecredit_id' => isset($response['refund_storecredit_id']) ? $response['refund_storecredit_id'] : null,
+            'transaction_id' => isset($response['transaction_id']) ? $response['transaction_id'] : null, 
+            'type' => 'refund',
+            'amount' => $amount,
+            'revenue' => isset($response['revenue']) ? $response['revenue'] : $amount,
+            'created_date' => new \MongoDate(strtotime('now')),
+            'response' => (array)$response
+        ]);
+        return true;
+    }
 }
