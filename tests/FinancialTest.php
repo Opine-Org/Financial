@@ -6,7 +6,7 @@ class FinancialTest extends \PHPUnit_Framework_TestCase {
     private $db;
 
     public function setup () {
-        date_default_timezone_set('America/New_York');
+        date_default_timezone_set('UTC');
         $root = getcwd();
         $container = new Container($root, $root . '/container.yml');
         $this->financial = $container->financial;
