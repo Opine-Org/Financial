@@ -60,8 +60,8 @@ class Financial {
         foreach ($methods as &$method) {
             $method['response'] = null;
             $method['result'] = null;
-            $method['result'] = $this->{$method['type'] . 'Gateway'}->authorize($orderId, $description, $method['amount'], $method['response']);
-            if ($result !== true) {
+            $method['result'] = $this->{$method['type'] . 'Gateway'}->authorize($orderId, $description, $method['amount'], $billingInfo, $paymentInfo, $method['response']);
+            if ($method['result'] !== true) {
                 break;
             }
         }
@@ -75,8 +75,8 @@ class Financial {
         foreach ($methods as $method) {
             $method['response'] = null;
             $method['result'] = null;
-            $method['result'] = $this->{$method['type'] . 'Gateway'}->payment($orderId, $description, $method['amount'], $method['response']);
-            if ($result !== true) {
+            $method['result'] = $this->{$method['type'] . 'Gateway'}->payment($orderId, $description, $method['amount'], $billingInfo, $paymentInfo, $method['response']);
+            if ($method['result'] !== true) {
                 break;
             }
         }
@@ -114,16 +114,8 @@ class Financial {
             if ($method['result'] != true) {
                 $rollback = true;
                 $response = $method['response'];
-                break;
+                return true;
             }
-        }
-        if ($rollback == true) {
-            foreach ($methods as $method) {
-                if ($method['result'] === true) {
-                    $this->{$method['type'] . 'Gateway'}->rollback($method['response']);
-                }
-            }
-            return true;
         }
         return false;
     }
@@ -153,5 +145,42 @@ class Financial {
             'response' => (array)$response
         ]);
         return true;
+    }
+
+    public function arrayToPaymentInfo ($document, $secured=false) {
+        $array = [
+            'creditcard_number' => $this->ifKeyElse($document, 'creditcard_number'),
+            'creditcard_expiration_month' => $this->ifKeyElse($document, 'creditcard_expiration_month'),
+            'creditcard_expiration_year' => $this->ifKeyElse($document, 'creditcard_expiration_year'),
+            'creditcard_security_code' => $this->ifKeyElse($document, 'creditcard_security_code'),
+            'creditcard_type' => $this->ifKeyElse($document, 'creditcard_type'),
+            'payment_method' => $this->ifKeyElse($document, 'payment_method')
+        ];
+        if ($secured) {
+            $array['creditcard_number'] = substr($array['creditcard_number'], -4);
+        }
+        return $array;
+    }
+
+    public function arrayToBillingInfo ($document) {
+        return [
+            'first_name' => $this->ifKeyElse($document, 'first_name'),
+            'last_name' => $this->ifKeyElse($document, 'last_name'),
+            'phone' => $this->ifKeyElse($document, 'phone'),
+            'email' => $this->ifKeyElse($document, 'email'),
+            'address' => $this->ifKeyElse($document, 'address'),
+            'address2' => $this->ifKeyElse($document, 'address2'),
+            'city' => $this->ifKeyElse($document, 'city'),
+            'state' => $this->ifKeyElse($document, 'state'),
+            'zipcode' => $this->ifKeyElse($document, 'zipcode'),
+            'country' => $this->ifKeyElse($document, 'country', 'US')
+        ];
+    }
+
+    private function ifKeyElse ($array, $key, $else=null) {
+        if (isset($array[$key])) {
+            return $array[$key];
+        }
+        return $else;
     }
 }
