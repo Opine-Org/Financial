@@ -14,4 +14,4 @@ services:
         class:     'Symfony\Component\Yaml\Yaml'
     financial:
         class:     'Opine\Financial'
-        arguments: ['@db']
+        arguments: ['@db', '@creditcardgateway', '@cashgateway', '@checkgateway', '@storecreditgateway', '@giftcardgateway']
